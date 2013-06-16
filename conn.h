@@ -45,6 +45,7 @@ struct connection_pool
 
 struct connection_pool *connection_pool_new(int max);
 void connection_pool_free(struct connection_pool *cp);
+int connection_dispatch(struct connection_pool *cp, int timeout);
 struct listening *create_listening(struct connection_pool *cp, void* sockaddr, socklen_t socklen);
 void close_listening_sockets();
 
