@@ -8,50 +8,60 @@ struct heap
 	size_t n, a;
 };
 
-static inline void heap_init(struct heap *h)
+inline static int greater(struct timer_node *a, struct timer_node *b)
+{
+	if (a->timeout > b->timeout)
+		return 1;
+	return 0;
+}
+
+inline static void heap_init(struct heap *h)
 {
 	h->p = NULL;
 	h->n = 0;
 	h->a = 0;
 }
 
-static inline void heap_uninit(struct heap *h)
+inline static void heap_destroy(struct heap *h)
 {
 	if (h->p)
 		free(h->p);
 }
 
-static void heap_shift_up(struct heap *h, size_t hole_index, struct timer_node *tn)
+static void heap_shift_up(struct heap *h, size_t idx, struct timer_node *tn)
 {
-	size_t parent = (hole_index - 1) / 2;
-	while (hole_index && heap_elem_greater(h->p[parent], tn))
+	size_t parent = (idx - 1) / 2;
+	while (idx && greater(h->p[parent], tn))
 	{
-		(h->p[hole_index] = h->p[parent])->heap_idx = hole_index;
-		hole_index = parent;
-		parent = (hole_index - 1) / 2;
+		h->p[idx] = h->p[parent];
+		h->p[idx]->heap_idx = idx;
+		idx = parent;
+		parent = (idx - 1) / 2;
 	}
-	(h->p[hole_index] = tn)->heap_idx = hole_index;
+	h->p[idx] = tn;
+	tn->heap_idx = idx;
 }
 
-static void heap_shift_down(struct heap *h, size_t hole_index, struct timer_node *tn)
+static void heap_shift_down(struct heap *h, size_t idx, struct timer_node *tn)
 {
-	size_t min_child = 2 * (hole_index + 1);
+	size_t min_child = 2 * (idx + 1);
 	while (min_child <= h->n)
 	{
-		min_child -= min_child == h->n || heap_elem_greater(h->p[min_child], h->p[min_child - 1]);
-		if (!(heap_elem_greater(tn, h->p[min_child])))
+		if (min_child == h->n)
+			min_child -= 1;
+		else if (greater(h->p[min_child], h->p[min_child - 1]))
+			min_child -= 1;
+		if (!(greater(tn, h->p[min_child])))
 			break;
-		(h->p[hole_index] = h->p[min_child])->heap_idx = hole_index;
-		hole_index = min_child;
-		min_child = 2 * (hole_index + 1);
+		h->p[idx] = h->p[min_child];
+		h->p[idx]->heap_idx = idx;
+		idx = min_child;
+		min_child = 2 * (idx + 1);
 	}
-	(h->p[hole_index] = tn)->heap_idx = hole_index;
+	h->p[idx] = tn;
+	h->p[idx]->heap_idx = idx;
 }
 
-static int heap_elem_greater(struct timer_node *a, struct timer_node *b)
-{
-	
-}
 
 static int heap_reserve(struct heap *h, size_t n)
 {
@@ -60,13 +70,13 @@ static int heap_reserve(struct heap *h, size_t n)
 
 	if (h->a < n)
 	{
-		a = h->a ? s->a * 2 : 8;
+		a = h->a ? h->a * 2 : 8;
 		if (a < n)
 			a = n;
 		if (!(p = (struct timer_node **)realloc(h->p, a * sizeof(struct timer_node *))))
 			return -1;
-		s->p = p;
-		s->a = a;
+		h->p = p;
+		h->a = a;
 	}
 	return 0;
 }
@@ -84,7 +94,7 @@ static struct timer_node *heap_pop(struct heap *h)
 	if (h->n)
 	{
 		struct timer_node *tn = *h->p;
-		heap_shift_down(h, 0u, h->p[--h->n]);
+		heap_shift_down(h, 0, h->p[--h->n]);
 		tn->heap_idx = -1;
 		return tn;
 	}
@@ -97,7 +107,7 @@ static int heap_erase(struct heap *h, struct timer_node *tn)
 	{
 		struct timer_node *last = h->p[--h->n];
 		size_t parent = (tn->heap_idx - 1) / 2;
-		if (tn->heap_idx > 0 && heap_elem_greater(h->p[parent], last))
+		if (tn->heap_idx > 0 && greater(h->p[parent], last))
 			heap_shift_up(h, tn->heap_idx, last);
 		else
 			heap_shift_down(h, tn->heap_idx, last);
