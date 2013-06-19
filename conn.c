@@ -124,7 +124,7 @@ struct connection_pool *connection_pool_new(int max)
 	if (max <= 0)
 		goto failed;
 
-	if ((epfd = epoll_create(0)) == -1)
+	if ((epfd = epoll_create(max)) == -1)
 		goto failed;
 	
 	if ((pool = malloc(sizeof(struct connection_pool))) == NULL)
@@ -139,9 +139,11 @@ struct connection_pool *connection_pool_new(int max)
 	pool->nevents = INITIAL_NEVENT;
 
 	pool->cs = malloc(sizeof(struct connection) * max);
+	if (pool->cs == NULL)
 		goto conn_failed;
 
 	buf = n_skbuf_new(max * 2);
+	if (buf == NULL)
 		goto buf_failed;
 
 	pool->max = max;

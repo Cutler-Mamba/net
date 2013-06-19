@@ -41,6 +41,7 @@ struct connection_pool
 	size_t n_conns;
 	struct connection *free_conns;
 	size_t n_free_conns;
+	int timerfd;
 };
 
 struct connection_pool *connection_pool_new(int max);
