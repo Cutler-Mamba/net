@@ -1,5 +1,6 @@
 #include "conn.h"
 #include "skbuf.h"
+#include "timer.h"
 #include <stdio.h>
 #include <errno.h>
 #include <stdlib.h>
@@ -11,6 +12,7 @@
 #include <sys/epoll.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <sys/timerfd.h>
 
 #define INITIAL_NEVENT 32
 #define MAX_NEVENT 4096
@@ -212,16 +214,16 @@ void connection_pool_free(struct connection_pool *cp)
 	free(cp);
 }
 
-static void accept_cb(struct connection_pool *cp, struct listening *l)
+static void accept_cb(struct connection_pool *cp, struct connection *c)
 {
 	struct sockaddr_in remote_addr;
 	socklen_t len;
-	struct connection *c;
+	struct connection *cc;
 	
 	len = sizeof(struct sockaddr_in);
 
 	/* system call */
-	int client_fd = accept(l->fd, (struct sockaddr *)&remote_addr, &len);
+	int client_fd = accept(c->fd, (struct sockaddr *)&remote_addr, &len);
 
 	if (client_fd >= 0)
 	{
@@ -231,16 +233,16 @@ static void accept_cb(struct connection_pool *cp, struct listening *l)
 			goto failed;
 		}
 
-		c = get_connection(cp);
-		if (c == NULL)
+		cc = get_connection(cp);
+		if (cc == NULL)
 		{
 			/* TODO log */
 			goto failed;
 		}
 
-		if (connection_add(cp, client_fd, c) == -1)
+		if (connection_add(cp, client_fd, cc) == -1)
 		{
-			free_connection(cp, c);
+			free_connection(cp, cc);
 			goto failed;
 		}
 	}
@@ -249,6 +251,18 @@ static void accept_cb(struct connection_pool *cp, struct listening *l)
 
 failed:
 	close(client_fd);
+}
+
+static void timer_expire_cb(struct timer_handler_node *n)
+{
+	struct timer_handler_node *tmp;
+	
+	tmp = n;
+	while (tmp)
+	{
+		(*(tmp->handler))(tmp->data);
+		tmp = tmp->next;
+	}
 }
 
 static void read_cb(struct connection_pool *cp, struct connection *c)
@@ -278,11 +292,19 @@ static void write_cb(struct connection *c)
 
 }
 
+static int get_timeout(struct itimerspec *it)
+{
+	return 0;
+}
+
 int connection_dispatch(struct connection_pool *cp, int timeout)
 {
 	int i, res;
-	int fd;
-	struct listening *l;
+	void *data;
+	struct timer_handler_node *n;
+	struct itimerspec new_timeout;
+	struct itimerspec old_timeout;
+	int flags;
 	struct connection *c;
 	uint32_t ev;
 
@@ -294,16 +316,19 @@ int connection_dispatch(struct connection_pool *cp, int timeout)
 
 	for (i = 0; i < res; ++i)
 	{
-		fd = cp->events[i].data.fd;
+		data = cp->events[i].data.ptr;
 
-		if (fd != -1)
+		if (data == &cp->timerfd)
 		{
-			l = cp->events[i].data.ptr;
-			accept_cb(cp, l);
+			get_ready_timers(&n);
+			timer_expire_cb(n);
+
+			flags = get_timeout(&new_timeout);
+			timerfd_settime(cp->timerfd, flags, &new_timeout, &old_timeout);
 		}
 		else
 		{
-			c = cp->events[i].data.ptr;
+			c = data;
 
 			if (c->fd == -1)
 				continue;
@@ -314,10 +339,10 @@ int connection_dispatch(struct connection_pool *cp, int timeout)
 				ev = (EPOLLIN | EPOLLOUT);
 
 			if (ev & EPOLLIN)
-				read_cb(cp, c);
+				c->read_cb(cp, c);
 
 			if (ev & EPOLLOUT)
-				write_cb(c);
+				c->write_cb(cp, c);
 		}
 	}
 
