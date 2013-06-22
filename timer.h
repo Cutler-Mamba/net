@@ -16,9 +16,12 @@ struct timer_node
 {
 	int heap_idx;
 	time_t timeout;
-	struct timer_handler_node *head;
+	void* data;
+	timer_expire_handler handler;
 };
 
+void timer_queue_init();
+void timer_queue_destroy();
 int add_timer(time_t timeout, timer_expire_handler handler, void* data);
 long wait_duration_usec(long max_duration);
 void get_ready_timers(struct timer_handler_node **n);

@@ -28,5 +28,6 @@ int main(int argc, char **argv)
 	}
 
 	connection_pool_free(cp);
+
 	return 0;
 }

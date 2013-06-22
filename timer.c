@@ -28,6 +28,16 @@ inline static void heap_destroy(struct heap *h)
 		free(h->p);
 }
 
+inline static int heap_empty(struct heap *h)
+{
+	return h->n == 0;
+}
+
+inline static size_t heap_size(struct heap *h)
+{
+	return h->n;
+}
+
 static void heap_shift_up(struct heap *h, size_t idx, struct timer_node *tn)
 {
 	size_t parent = (idx - 1) / 2;
@@ -117,19 +127,56 @@ static int heap_erase(struct heap *h, struct timer_node *tn)
 	return -1;
 }
 
+static struct heap h;
+
+void timer_queue_init()
+{
+	heap_init(&h);
+}
+
+void timer_queue_destroy()
+{
+	heap_destroy(&h);
+}
+
 int add_timer(time_t timeout, timer_expire_handler handler, void* data)
 {
-	return -1;
+	struct timer_node* tn;
+
+	tn = malloc(sizeof(struct timer_node));
+	if (tn == NULL)
+		return -1;
+	
+	tn->heap_idx = -1;
+	tn->timeout = timeout;
+	tn->data = data;
+	tn->handler = handler;
+	if (heap_push(&h, tn) == -1)
+	{
+		free(tn);
+		return -1;
+	}
+	return 0;
 }
 
 long wait_duration_usec(long max_duration)
 {
-	return max_duration;
+	long duration;
+
+	if (heap_empty(&h))
+		return max_duration;
+	
+	duration = h.p[0]->timeout - time(NULL);
+	if (duration < 0)
+		duration = 0;
+	else if (duration > max_duration)
+		duration = max_duration;
+	return duration;
 }
 
 void get_ready_timers(struct timer_handler_node **n)
 {
-
+	*n = NULL;
 }
 
 void get_all_timers(struct timer_handler_node **n)

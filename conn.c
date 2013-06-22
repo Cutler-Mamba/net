@@ -120,6 +120,26 @@ static void free_connection(struct connection_pool *cp, struct connection *c)
 	/* TODO unlock */
 }
 
+static int get_timeout(struct itimerspec *ts)
+{
+	ts->it_interval.tv_sec = 0;
+	ts->it_interval.tv_nsec = 0;
+
+	long usec = wait_duration_usec(5 * 1000 * 1000);
+	ts->it_value.tv_sec = usec / 1000000;
+	ts->it_value.tv_nsec = usec ? (usec % 1000000) * 1000 : 1;
+
+	return usec ? 0 : TFD_TIMER_ABSTIME;
+}
+
+static void update_timeout(struct connection_pool *cp)
+{
+	struct itimerspec new_timeout;
+	struct itimerspec old_timeout;
+	int flags = get_timeout(&new_timeout);
+	timerfd_settime(cp->timerfd, flags, &new_timeout, &old_timeout);
+}
+
 struct connection_pool *connection_pool_new(int max)
 {
 	int epfd;
@@ -149,6 +169,14 @@ struct connection_pool *connection_pool_new(int max)
 
 	pool->epfd = epfd;
 	pool->timerfd = timerfd;
+
+	/* add timer descriptor to epoll. */
+	struct epoll_event ev;
+	ev.events = EPOLLIN | EPOLLERR;
+	ev.data.ptr = &pool->timerfd;
+	epoll_ctl(pool->epfd, EPOLL_CTL_ADD, pool->timerfd, &ev);
+
+	update_timeout(pool);
 
 	pool->events = malloc(sizeof(struct epoll_event) * INITIAL_NEVENT);
 	if (pool->events == NULL)
@@ -279,6 +307,7 @@ failed:
 
 static void timer_expire_cb(struct timer_handler_node *n)
 {
+	printf("timer_expire_cb!\n");
 	struct timer_handler_node *tmp;
 	
 	tmp = n;
@@ -333,19 +362,11 @@ static void write_cb(struct connection_pool *cp, struct connection *c)
 	}
 }
 
-static int get_timeout(struct itimerspec *it)
-{
-	return 0;
-}
-
 int connection_pool_dispatch(struct connection_pool *cp, int timeout)
 {
 	int i, res;
 	void *data;
 	struct timer_handler_node *n;
-	struct itimerspec new_timeout;
-	struct itimerspec old_timeout;
-	int flags;
 	struct connection *c;
 	uint32_t ev;
 
@@ -364,8 +385,8 @@ int connection_pool_dispatch(struct connection_pool *cp, int timeout)
 			get_ready_timers(&n);
 			timer_expire_cb(n);
 
-			flags = get_timeout(&new_timeout);
-			timerfd_settime(cp->timerfd, flags, &new_timeout, &old_timeout);
+			/* continue */
+			update_timeout(cp);
 		}
 		else
 		{
