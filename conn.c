@@ -34,7 +34,6 @@ static int connection_add(struct connection_pool *cp, int fd, struct connection 
 {
 	struct epoll_event ev;
 	ev.events = EPOLLIN | EPOLLOUT | EPOLLET;
-	ev.data.fd = -1;
 	ev.data.ptr = c;
 
 	if (epoll_ctl(cp->epfd, EPOLL_CTL_ADD, fd, &ev) == -1)
@@ -43,7 +42,8 @@ static int connection_add(struct connection_pool *cp, int fd, struct connection 
 	/* TODO lock */
 	
 	c->next = cp->conns;
-	cp->conns->prev = c;
+	if (cp->conns)
+		cp->conns->prev = c;
 	cp->conns = c;
 	c->prev = NULL;
 	cp->n_conns++;
@@ -70,7 +70,8 @@ static int connection_del(struct connection_pool *cp, int fd, struct connection 
 	cp->conns--;
 
 	c->next = cp->free_conns;
-	cp->free_conns->prev = c;
+	if (cp->free_conns)
+		cp->free_conns->prev = c;
 	cp->free_conns = c;
 	c->prev = NULL;
 	cp->n_free_conns++;
@@ -456,6 +457,10 @@ struct listening *create_listening(struct connection_pool *cp, void* sockaddr, s
 
 	l->backlog = DEFAULT_LISTEN_BACKLOG;
 	l->conn = NULL;
+
+	/* add to pool->ls */
+	l->data = cp->ls;
+	cp->ls = l;
 
 	return l;
 }

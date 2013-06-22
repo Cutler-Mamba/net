@@ -15,6 +15,7 @@ int main(int argc, char **argv)
 	if (cp == NULL)
 		return -1;
 
+	/* create listening */
 	memset(&l_addr, 0, sizeof(struct sockaddr_in));
 	l_addr.sin_family = AF_INET;
 	l_addr.sin_port = htons(8888);
@@ -22,6 +23,10 @@ int main(int argc, char **argv)
 
 	l = create_listening(cp, &l_addr, sizeof(struct sockaddr_in));
 
+	/* open listening */
+	if (open_listening_sockets(cp) == -1)
+		return -1;
+	
 	while (1)
 	{
 		connection_pool_dispatch(cp, -1);
