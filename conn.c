@@ -460,6 +460,91 @@ struct listening *create_listening(struct connection_pool *cp, void* sockaddr, s
 	return l;
 }
 
+int open_listening_sockets(struct connection_pool *cp)
+{
+	struct listening *l;
+	int fd;
+	int reuseaddr;
+	struct connection *c;
+
+	reuseaddr = 1;
+
+	l = cp->ls;
+
+	while (l)
+	{
+		if (l->fd != -1)
+			goto next;
+
+		/* create socket */
+		fd = socket(l->sockaddr->sa_family, SOCK_STREAM, 0);
+		if (fd == -1)
+		{
+			/* TODO log */
+			return -1;
+		}
+
+		/* set nonblocking */
+		if (set_non_blocking(fd) == -1)
+		{
+			/* TODO log */
+			return -1;
+		}
+
+		/* set options */
+		if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR,
+				(const void *)&reuseaddr, sizeof(int)) == -1)
+		{
+			/* TODO log */
+			close(fd);
+			return -1;
+		}
+
+		/* bind */
+		if (bind(fd, l->sockaddr, l->socklen) == -1)
+		{
+			/* TODO log */
+			close(fd);
+			return -1;
+		}
+
+		/* listen */
+		if (listen(fd, l->backlog) == -1)
+		{
+			/* TODO log */
+			close(fd);
+			return -1;
+		}
+
+		l->fd = fd;
+
+		c = get_connection(cp);
+		if (c == NULL)
+		{
+			close(fd);
+			return -1;
+		}
+
+		c->fd = fd;
+		c->l = l;
+		l->conn = c;
+		c->read_cb = accept_cb;
+		c->write_cb = NULL;
+
+		/* add to epoll */
+		if (connection_add(cp, fd, c) == -1)
+		{
+			free_connection(cp, c);
+			close(fd);
+			return -1;
+		}
+next:
+		l = l->data;
+	}
+
+	return 0;
+}
+
 void close_listening_sockets(struct connection_pool *cp)
 {
 	struct listening *l;
