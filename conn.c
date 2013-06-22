@@ -123,6 +123,7 @@ static void free_connection(struct connection_pool *cp, struct connection *c)
 struct connection_pool *connection_pool_new(int max)
 {
 	int epfd;
+	int timerfd;
 	struct connection_pool *pool;
 	struct connection *next;
 	struct skbuf *buf;
@@ -134,19 +135,20 @@ struct connection_pool *connection_pool_new(int max)
 	if ((epfd = epoll_create(max)) == -1)
 		goto failed;
 	
-	if ((pool = malloc(sizeof(struct connection_pool))) == NULL)
-		goto pool_failed;
-
-	if ((pool->timerfd = timerfd_create(CLOCK_MONOTONIC, 0)) == -1)
+	if ((timerfd = timerfd_create(CLOCK_MONOTONIC, 0)) == -1)
 		goto timerfd_failed;
 	
-	if (fcntl(pool->timerfd, F_SETFD, FD_CLOEXEC) == -1)
+	if (fcntl(timerfd, F_SETFD, FD_CLOEXEC) == -1)
 	{
-		close(pool->timerfd);
+		close(timerfd);
 		goto timerfd_failed;
 	}
 
+	if ((pool = malloc(sizeof(struct connection_pool))) == NULL)
+		goto pool_failed;
+
 	pool->epfd = epfd;
+	pool->timerfd = timerfd;
 
 	pool->events = malloc(sizeof(struct epoll_event) * INITIAL_NEVENT);
 	if (pool->events == NULL)
@@ -198,10 +200,10 @@ buf_failed:
 conn_failed:
 	free(pool->events);
 events_failed:
-	close(pool->timerfd);
-timerfd_failed:
 	free(pool);
 pool_failed:
+	close(timerfd);
+timerfd_failed:
 	close(epfd);
 failed:
 	return NULL;
@@ -224,6 +226,8 @@ void connection_pool_free(struct connection_pool *cp)
 	}
 	if (cp->events != NULL)
 		free(cp->events);
+	if (cp->timerfd >= 0)
+		close(cp->timerfd);
 	if (cp->epfd >= 0)
 		close(cp->epfd);
 
@@ -334,7 +338,7 @@ static int get_timeout(struct itimerspec *it)
 	return 0;
 }
 
-int connection_dispatch(struct connection_pool *cp, int timeout)
+int connection_pool_dispatch(struct connection_pool *cp, int timeout)
 {
 	int i, res;
 	void *data;
