@@ -116,3 +116,23 @@ static int heap_erase(struct heap *h, struct timer_node *tn)
 	}
 	return -1;
 }
+
+int add_timer(time_t timeout, timer_expire_handler handler, void* data)
+{
+	return -1;
+}
+
+long wait_duration_usec(long max_duration)
+{
+	return max_duration;
+}
+
+void get_ready_timers(struct timer_handler_node **n)
+{
+
+}
+
+void get_all_timers(struct timer_handler_node **n)
+{
+
+}

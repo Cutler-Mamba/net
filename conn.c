@@ -137,6 +137,15 @@ struct connection_pool *connection_pool_new(int max)
 	if ((pool = malloc(sizeof(struct connection_pool))) == NULL)
 		goto pool_failed;
 
+	if ((pool->timerfd = timerfd_create(CLOCK_MONOTONIC, 0)) == -1)
+		goto timerfd_failed;
+	
+	if (fcntl(pool->timerfd, F_SETFD, FD_CLOEXEC) == -1)
+	{
+		close(pool->timerfd);
+		goto timerfd_failed;
+	}
+
 	pool->epfd = epfd;
 
 	pool->events = malloc(sizeof(struct epoll_event) * INITIAL_NEVENT);
@@ -189,6 +198,8 @@ buf_failed:
 conn_failed:
 	free(pool->events);
 events_failed:
+	close(pool->timerfd);
+timerfd_failed:
 	free(pool);
 pool_failed:
 	close(epfd);
@@ -245,14 +256,15 @@ static void accept_cb(struct connection_pool *cp, struct connection *c)
 			goto failed;
 		}
 
-		cc->read_cb = read_cb;
-		cc->write_cb = write_cb;
-
 		if (connection_add(cp, client_fd, cc) == -1)
 		{
 			free_connection(cp, cc);
 			goto failed;
 		}
+
+		cc->l = c->l;
+		cc->read_cb = read_cb;
+		cc->write_cb = write_cb;
 	}
 
 	return;
