@@ -17,6 +17,11 @@
 #define INITIAL_NEVENT 32
 #define MAX_NEVENT 4096
 
+/*forward declare*/
+static void accept_cb(struct connection_pool *cp, struct connection *c);
+static void read_cb(struct connection_pool *cp, struct connection *c);
+static void write_cb(struct connection_pool *cp, struct connection *c);
+
 static int set_non_blocking(int fd)
 {
 	int flag = fcntl(fd, F_GETFL, 0);
@@ -240,6 +245,9 @@ static void accept_cb(struct connection_pool *cp, struct connection *c)
 			goto failed;
 		}
 
+		cc->read_cb = read_cb;
+		cc->write_cb = write_cb;
+
 		if (connection_add(cp, client_fd, cc) == -1)
 		{
 			free_connection(cp, cc);
@@ -287,9 +295,26 @@ static void read_cb(struct connection_pool *cp, struct connection *c)
 	}
 }
 
-static void write_cb(struct connection *c)
+static void write_cb(struct connection_pool *cp, struct connection *c)
 {
+	ssize_t res;
 
+	while (1)
+	{
+		res = skbuf_write(c->send_buf, c->fd);
+		if (res >= 0 || res == -2 || res == -4)
+			break;
+		else if (res == 3)
+		{/*close fd*/
+			if (connection_del(cp, c->fd, c) == -1)
+			{
+				/* TODO log */
+			}
+			break;
+		}
+		else if (res == -1)
+			continue;
+	}
 }
 
 static int get_timeout(struct itimerspec *it)

@@ -463,9 +463,10 @@ done:
 	return result;
 }
 
-static int skbuf_write_atmost(struct skbuf *buffer, int fd, int howmuch)
+static ssize_t skbuf_write_atmost(struct skbuf *buffer, int fd, int howmuch)
 {
-	int n = -1;
+	ssize_t err;
+	ssize_t n, result;
 
 	if (howmuch < 0 || (size_t)howmuch > buffer->total_len)
 		howmuch = buffer->total_len;
@@ -473,16 +474,53 @@ static int skbuf_write_atmost(struct skbuf *buffer, int fd, int howmuch)
 	if (howmuch > 0)
 	{
 		void *p = skbuf_pullup(buffer, howmuch);
-		n = write(fd, p, howmuch);
+
+		while (1)
+		{
+			/* system call */
+			n = send(fd, p, howmuch, 0);
+
+			if (n > 0)
+			{
+				skbuf_drain(buffer, n);
+
+				if (n < (ssize_t)howmuch)
+					result = n;
+				else
+					result = -1;
+				goto done;
+			}
+
+			err = errno;
+
+			if (n == 0)
+			{
+				result = n;
+				goto done;
+			}
+			
+			if (err != EINTR)
+			{
+				if (err == EAGAIN)
+				{
+					result = -2;
+				}
+				else
+				{
+					result = -3;
+					close(fd);
+				}
+				goto done;
+			}
+		}
 	}
-
-	if (n > 0)
-		skbuf_drain(buffer, n);
-
-	return n;
+	else
+		result = -4;
+done:
+	return result;
 }
 
-int skbuf_write(struct skbuf *buf, int fd)
+ssize_t skbuf_write(struct skbuf *buf, int fd)
 {
 	return skbuf_write_atmost(buf, fd, -1);
 }

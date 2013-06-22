@@ -33,6 +33,6 @@ void skbuf_free(struct skbuf *buf);
 struct skbuf *n_skbuf_new(size_t n);
 void skbuf_free_all_chains(struct skbuf_chain *chain);
 ssize_t skbuf_read(struct skbuf *buf, int fd, int howmuch);
-int skbuf_write(struct skbuf *buf, int fd);
+ssize_t skbuf_write(struct skbuf *buf, int fd);
 
 #endif
