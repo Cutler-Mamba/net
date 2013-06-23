@@ -3,7 +3,10 @@
 
 #include <time.h>
 
-typedef void (*timer_expire_handler)(void *data);
+/* forward declare */
+struct connection_pool;
+
+typedef void (*timer_expire_handler)(struct connection_pool *cp, void *data);
 
 struct timer_handler_node
 {
@@ -20,11 +23,11 @@ struct timer_node
 	timer_expire_handler handler;
 };
 
-void timer_queue_init();
-void timer_queue_destroy();
-int add_timer(time_t timeout, timer_expire_handler handler, void* data);
-long wait_duration_usec(long max_duration);
-void get_ready_timers(struct timer_handler_node **n);
-void get_all_timers(struct timer_handler_node **n);
+int timer_queue_init(struct connection_pool *cp);
+void timer_queue_destroy(struct connection_pool *cp);
+int add_timer(struct connection_pool *cp, time_t timeout, timer_expire_handler handler, void* data);
+long wait_duration_usec(struct connection_pool *cp, long max_duration);
+void get_ready_timers(struct connection_pool *cp, struct timer_handler_node **n);
+void get_all_timers(struct connection_pool *cp, struct timer_handler_node **n);
 
 #endif

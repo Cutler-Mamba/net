@@ -1,4 +1,5 @@
 #include "timer.h"
+#include "conn.h"
 #include <stddef.h>
 #include <stdlib.h>
 
@@ -127,19 +128,31 @@ static int heap_erase(struct heap *h, struct timer_node *tn)
 	return -1;
 }
 
-static struct heap h;
-
-void timer_queue_init()
+int timer_queue_init(struct connection_pool *cp)
 {
-	heap_init(&h);
+	if (cp->timer_queue)
+	{
+		/* TODO log */
+		return -1;
+	}
+
+	cp->timer_queue = malloc(sizeof(struct heap));
+	if (cp->timer_queue == NULL)
+	{
+		/* TODO log */
+		return -1;
+	}
+
+	heap_init(cp->timer_queue);
+	return 0;
 }
 
-void timer_queue_destroy()
+void timer_queue_destroy(struct connection_pool *cp)
 {
-	heap_destroy(&h);
+	heap_destroy(cp->timer_queue);
 }
 
-int add_timer(time_t timeout, timer_expire_handler handler, void* data)
+int add_timer(struct connection_pool *cp, time_t timeout, timer_expire_handler handler, void* data)
 {
 	struct timer_node* tn;
 
@@ -148,10 +161,10 @@ int add_timer(time_t timeout, timer_expire_handler handler, void* data)
 		return -1;
 	
 	tn->heap_idx = -1;
-	tn->timeout = timeout;
+	tn->timeout = time(NULL) + timeout;
 	tn->data = data;
 	tn->handler = handler;
-	if (heap_push(&h, tn) == -1)
+	if (heap_push(cp->timer_queue, tn) == -1)
 	{
 		free(tn);
 		return -1;
@@ -159,14 +172,14 @@ int add_timer(time_t timeout, timer_expire_handler handler, void* data)
 	return 0;
 }
 
-long wait_duration_usec(long max_duration)
+long wait_duration_usec(struct connection_pool *cp, long max_duration)
 {
 	long duration;
 
-	if (heap_empty(&h))
+	if (heap_empty(cp->timer_queue))
 		return max_duration;
 	
-	duration = h.p[0]->timeout - time(NULL);
+	duration = cp->timer_queue->p[0]->timeout - time(NULL);
 	if (duration < 0)
 		duration = 0;
 	else if (duration > max_duration)
@@ -174,12 +187,12 @@ long wait_duration_usec(long max_duration)
 	return duration;
 }
 
-void get_ready_timers(struct timer_handler_node **n)
+void get_ready_timers(struct connection_pool *cp, struct timer_handler_node **n)
 {
 	*n = NULL;
 }
 
-void get_all_timers(struct timer_handler_node **n)
+void get_all_timers(struct connection_pool *cp, struct timer_handler_node **n)
 {
 
 }

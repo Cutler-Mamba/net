@@ -19,6 +19,7 @@
 
 /*forward declare*/
 static void accept_cb(struct connection_pool *cp, struct connection *c);
+static void connect_cb(struct connection_pool *cp, struct connection *c);
 static void read_cb(struct connection_pool *cp, struct connection *c);
 static void write_cb(struct connection_pool *cp, struct connection *c);
 
@@ -121,12 +122,12 @@ static void free_connection(struct connection_pool *cp, struct connection *c)
 	/* TODO unlock */
 }
 
-static int get_timeout(struct itimerspec *ts)
+static int get_timeout(struct connection_pool *cp, struct itimerspec *ts)
 {
 	ts->it_interval.tv_sec = 0;
 	ts->it_interval.tv_nsec = 0;
 
-	long usec = wait_duration_usec(5 * 1000 * 1000);
+	long usec = wait_duration_usec(cp, 5 * 1000 * 1000);
 	ts->it_value.tv_sec = usec / 1000000;
 	ts->it_value.tv_nsec = usec ? (usec % 1000000) * 1000 : 1;
 
@@ -137,7 +138,7 @@ static void update_timeout(struct connection_pool *cp)
 {
 	struct itimerspec new_timeout;
 	struct itimerspec old_timeout;
-	int flags = get_timeout(&new_timeout);
+	int flags = get_timeout(cp, &new_timeout);
 	timerfd_settime(cp->timerfd, flags, &new_timeout, &old_timeout);
 }
 
@@ -263,6 +264,42 @@ void connection_pool_free(struct connection_pool *cp)
 	free(cp);
 }
 
+/* forward declare */
+static void connecting_peer(struct connection_pool *cp, struct connecting *ci);
+
+inline static void time_to_connecting_handler(struct connection_pool *cp, void *data)
+{
+	connecting_peer(cp, (struct connecting *)data);
+}
+
+static void connect_cb(struct connection_pool* cp, struct connection *c)
+{
+	int res;
+	struct connecting *ci;
+
+	ci = (struct connecting *)c->data;
+
+	if (getsockopt(c->fd, SOL_SOCKET, SO_ERROR, &res, (socklen_t *)sizeof(res)) == -1)
+	{
+		/* TODO log */
+		goto conti;
+	}
+
+	if (res != 0)
+		goto conti;
+	
+	ci->status = CONNECT_SUCCESS;
+	c->read_cb = read_cb;
+	c->write_cb = write_cb;
+
+	/* callback */
+
+	return;
+conti:
+	ci->status = CONNECT_NONE;
+	add_timer(cp, 1, time_to_connecting_handler, c);
+}
+
 static void accept_cb(struct connection_pool *cp, struct connection *c)
 {
 	struct sockaddr_in remote_addr;
@@ -295,7 +332,7 @@ static void accept_cb(struct connection_pool *cp, struct connection *c)
 			goto failed;
 		}
 
-		cc->l = c->l;
+		cc->data = c->data;
 		cc->read_cb = read_cb;
 		cc->write_cb = write_cb;
 	}
@@ -306,7 +343,7 @@ failed:
 	close(client_fd);
 }
 
-static void timer_expire_cb(struct timer_handler_node *n)
+static void timer_expire_cb(struct connection_pool *cp, struct timer_handler_node *n)
 {
 	printf("timer_expire_cb!\n");
 	struct timer_handler_node *tmp;
@@ -314,7 +351,7 @@ static void timer_expire_cb(struct timer_handler_node *n)
 	tmp = n;
 	while (tmp)
 	{
-		(*(tmp->handler))(tmp->data);
+		(*(tmp->handler))(cp, tmp->data);
 		tmp = tmp->next;
 	}
 }
@@ -383,8 +420,8 @@ int connection_pool_dispatch(struct connection_pool *cp, int timeout)
 
 		if (data == &cp->timerfd)
 		{
-			get_ready_timers(&n);
-			timer_expire_cb(n);
+			get_ready_timers(cp, &n);
+			timer_expire_cb(cp, n);
 
 			/* continue */
 			update_timeout(cp);
@@ -531,7 +568,7 @@ int open_listening_sockets(struct connection_pool *cp)
 		}
 
 		c->fd = fd;
-		c->l = l;
+		c->data = l;
 		l->conn = c;
 		c->read_cb = accept_cb;
 		c->write_cb = NULL;
@@ -570,5 +607,124 @@ void close_listening_sockets(struct connection_pool *cp)
 
 		/* next */
 		l = l->data;
+	}
+}
+
+struct connecting *create_connecting(struct connection_pool *cp, void* sockaddr, socklen_t socklen)
+{
+	
+	struct connecting *ci;
+	struct sockaddr *sa;
+
+	ci = malloc(sizeof(struct connecting));
+	if (ci == NULL)
+		return NULL;
+	
+	memset(ci, 0, sizeof(struct connecting));
+
+	ci->data = NULL;
+
+	sa = malloc(sizeof(socklen));
+	if (sa == NULL)
+	{
+		free(ci);
+		return NULL;
+	}
+
+	memcpy(sa, sockaddr, socklen);
+
+	ci->sockaddr = sa;
+	ci->socklen = socklen;
+
+	ci->status = CONNECT_NONE;
+	ci->conn = NULL;
+
+	/* add to pool->cis */
+	ci->data = cp->cis;
+	cp->cis = ci;
+
+	return ci;
+}
+
+static void connecting_peer(struct connection_pool* cp, struct connecting *ci)
+{
+	int fd;
+	int rc;
+	int err;
+	struct connection *c;
+
+	do
+	{
+		fd = socket(ci->sockaddr->sa_family, SOCK_STREAM, 0);
+		if (fd == -1)
+		{
+			/* TODO log */
+			break;
+		}
+
+		c = get_connection(cp);
+		if (c == NULL)
+		{
+			/* TODO log */
+			close(fd);
+			break;
+		}
+
+		/* set nonblocking */
+		if (set_non_blocking(fd) == -1)
+		{
+			/* TODO log */
+			close(fd);
+			break;
+		}
+
+		ci->conn = c;
+		c->fd = fd;
+		c->read_cb = NULL;
+		c->write_cb = connect_cb;
+
+		/* system call */
+		rc = connect(fd, ci->sockaddr, ci->socklen);
+		if (rc == -1)
+		{
+			err = errno;
+			if (err != EINPROGRESS)
+			{
+				free_connection(cp, c);
+				ci->conn = NULL;
+				close(fd);
+				break;
+			}
+		}
+
+		/* add to epoll */
+		if (connection_add(cp, fd, c) == -1)
+		{
+			free_connection(cp, c);
+			ci->conn = NULL;
+			close(fd);
+			break;
+		}
+
+		ci->status = CONNECT_PENDING;
+		return;
+
+	} while (0);
+
+	add_timer(cp, 1, time_to_connecting_handler, ci);
+}
+
+void do_connecting_all(struct connection_pool *cp)
+{
+	struct connecting *ci;
+
+	ci = cp->cis;
+
+	while (ci)
+	{
+		connecting_peer(cp, ci);
+
+		/* next */
+		ci = ci->data;
 	}
 }
