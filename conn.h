@@ -78,6 +78,6 @@ struct listening *create_listening(struct connection_pool *cp, void* sockaddr, s
 int open_listening_sockets(struct connection_pool *cp);
 void close_listening_sockets(struct connection_pool *cp);
 struct connecting *create_connecting(struct connection_pool *cp, void* sockaddr, socklen_t socklen);
-void do_connecting_all(struct connection_pool *cp);
+void connecting_peer(struct connection_pool* cp, struct connecting *ci);
 
 #endif

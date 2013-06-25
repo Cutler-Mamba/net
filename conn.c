@@ -171,6 +171,8 @@ struct connection_pool *connection_pool_new(int max)
 
 	pool->epfd = epfd;
 	pool->timerfd = timerfd;
+	if (timer_queue_init(pool) == -1)
+		goto timer_queue_failed;
 
 	/* add timer descriptor to epoll. */
 	struct epoll_event ev;
@@ -230,6 +232,8 @@ buf_failed:
 conn_failed:
 	free(pool->events);
 events_failed:
+	timer_queue_destroy(pool);
+timer_queue_failed:
 	free(pool);
 pool_failed:
 	close(timerfd);
@@ -256,6 +260,7 @@ void connection_pool_free(struct connection_pool *cp)
 	}
 	if (cp->events != NULL)
 		free(cp->events);
+	timer_queue_destroy(cp);
 	if (cp->timerfd >= 0)
 		close(cp->timerfd);
 	if (cp->epfd >= 0)
@@ -264,22 +269,15 @@ void connection_pool_free(struct connection_pool *cp)
 	free(cp);
 }
 
-/* forward declare */
-static void connecting_peer(struct connection_pool *cp, struct connecting *ci);
-
-inline static void time_to_connecting_handler(struct connection_pool *cp, void *data)
-{
-	connecting_peer(cp, (struct connecting *)data);
-}
-
 static void connect_cb(struct connection_pool* cp, struct connection *c)
 {
 	int res;
 	struct connecting *ci;
+	socklen_t len = sizeof(int);
 
 	ci = (struct connecting *)c->data;
 
-	if (getsockopt(c->fd, SOL_SOCKET, SO_ERROR, &res, (socklen_t *)sizeof(res)) == -1)
+	if (getsockopt(c->fd, SOL_SOCKET, SO_ERROR, &res, &len) == -1)
 	{
 		/* TODO log */
 		goto conti;
@@ -297,7 +295,6 @@ static void connect_cb(struct connection_pool* cp, struct connection *c)
 	return;
 conti:
 	ci->status = CONNECT_NONE;
-	add_timer(cp, 1, time_to_connecting_handler, c);
 }
 
 static void accept_cb(struct connection_pool *cp, struct connection *c)
@@ -646,7 +643,7 @@ struct connecting *create_connecting(struct connection_pool *cp, void* sockaddr,
 	return ci;
 }
 
-static void connecting_peer(struct connection_pool* cp, struct connecting *ci)
+void connecting_peer(struct connection_pool* cp, struct connecting *ci)
 {
 	int fd;
 	int rc;
@@ -655,6 +652,12 @@ static void connecting_peer(struct connection_pool* cp, struct connecting *ci)
 
 	do
 	{
+		if (ci->status != CONNECT_NONE)
+		{
+			/* TODO log */
+			break;
+		}
+
 		fd = socket(ci->sockaddr->sa_family, SOCK_STREAM, 0);
 		if (fd == -1)
 		{
@@ -679,6 +682,7 @@ static void connecting_peer(struct connection_pool* cp, struct connecting *ci)
 		}
 
 		ci->conn = c;
+		c->data = ci;
 		c->fd = fd;
 		c->read_cb = NULL;
 		c->write_cb = connect_cb;
@@ -710,21 +714,4 @@ static void connecting_peer(struct connection_pool* cp, struct connecting *ci)
 		return;
 
 	} while (0);
-
-	add_timer(cp, 1, time_to_connecting_handler, ci);
-}
-
-void do_connecting_all(struct connection_pool *cp)
-{
-	struct connecting *ci;
-
-	ci = cp->cis;
-
-	while (ci)
-	{
-		connecting_peer(cp, ci);
-
-		/* next */
-		ci = ci->data;
-	}
 }

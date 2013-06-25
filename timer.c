@@ -130,12 +130,6 @@ static int heap_erase(struct heap *h, struct timer_node *tn)
 
 int timer_queue_init(struct connection_pool *cp)
 {
-	if (cp->timer_queue)
-	{
-		/* TODO log */
-		return -1;
-	}
-
 	cp->timer_queue = malloc(sizeof(struct heap));
 	if (cp->timer_queue == NULL)
 	{

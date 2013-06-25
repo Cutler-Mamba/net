@@ -10,6 +10,7 @@ int main(int argc, char **argv)
 	struct connection_pool *cp;
 	struct sockaddr_in l_addr;
 	struct listening *l;
+	struct connecting *ci;
 
 	cp = connection_pool_new(2048);
 	if (cp == NULL)
@@ -20,7 +21,11 @@ int main(int argc, char **argv)
 	l_addr.sin_port = htons(8888);
 	l_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
 
-	l = create_listening(cp, &l_addr, sizeof(struct sockaddr_in));
+	ci = create_connecting(cp, &l_addr, sizeof(struct sockaddr_in));
+	if (ci == NULL)
+		return -1;
+
+	connecting_peer(cp, ci);
 
 	while (1)
 	{
