@@ -28,6 +28,9 @@ struct skbuf_chain
 	unsigned char *buffer;
 };
 
+void skbuf_init(struct skbuf *buf);
+void skbuf_destroy(struct skbuf *buf);
+
 struct skbuf *skbuf_new();
 void skbuf_free(struct skbuf *buf);
 struct skbuf *n_skbuf_new(size_t n);

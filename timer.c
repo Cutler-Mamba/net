@@ -3,11 +3,6 @@
 #include <stddef.h>
 #include <stdlib.h>
 
-struct heap
-{
-	struct timer_node **p;
-	size_t n, a;
-};
 
 inline static int greater(struct timer_node *a, struct timer_node *b)
 {
@@ -128,17 +123,9 @@ static int heap_erase(struct heap *h, struct timer_node *tn)
 	return -1;
 }
 
-int timer_queue_init(struct connection_pool *cp)
+void timer_queue_init(struct connection_pool *cp)
 {
-	cp->timer_queue = malloc(sizeof(struct heap));
-	if (cp->timer_queue == NULL)
-	{
-		/* TODO log */
-		return -1;
-	}
-
 	heap_init(cp->timer_queue);
-	return 0;
 }
 
 void timer_queue_destroy(struct connection_pool *cp)

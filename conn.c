@@ -145,101 +145,115 @@ static void update_timeout(struct connection_pool *cp)
 struct connection_pool *connection_pool_new(int max)
 {
 	int epfd;
+	struct epoll_event *ees;
 	int timerfd;
-	struct connection_pool *pool;
+	struct heap* h;
+	struct connection_pool *cp;
+	struct connection *cs;
 	struct connection *next;
-	struct skbuf *buf;
+	struct skbuf *bufs;
 	int i;
 
 	if (max <= 0)
-		goto failed;
+		return NULL;
 
+	cp->max = max;
+
+	/* epollfd */
 	if ((epfd = epoll_create(max)) == -1)
 		goto failed;
 	
+	cp->epfd = epfd;
+
+	if ((ees = malloc(sizeof(struct epoll_event) * INITIAL_NEVENT)) == NULL)
+		goto failed;
+
+	cp->events = ees;
+	cp->nevents = INITIAL_NEVENT;
+
+	/* timerfd */
 	if ((timerfd = timerfd_create(CLOCK_MONOTONIC, 0)) == -1)
-		goto timerfd_failed;
+		goto failed;
 	
+	cp->timerfd = timerfd;
+
 	if (fcntl(timerfd, F_SETFD, FD_CLOEXEC) == -1)
-	{
-		close(timerfd);
-		goto timerfd_failed;
-	}
+		goto failed;
 
-	if ((pool = malloc(sizeof(struct connection_pool))) == NULL)
-		goto pool_failed;
+	if ((h = malloc(sizeof(struct heap))) == NULL)
+		goto failed;
+	
+	cp->timer_queue = h;
 
-	pool->epfd = epfd;
-	pool->timerfd = timerfd;
-	if (timer_queue_init(pool) == -1)
-		goto timer_queue_failed;
+	/* connection_pool */
+	if ((cp = malloc(sizeof(struct connection_pool))) == NULL)
+		goto failed;
+
+	if ((cs = malloc(sizeof(struct connection) * max)) == NULL)
+		goto failed;
+	
+	cp->cs = cs;
+
+	if ((bufs = malloc(sizeof(struct skbuf) * 2 * max)) == NULL)
+		goto failed;
+	
+	cp->bufs = bufs;
+	
+	/* ----------------initialize from here--------------- */
 
 	/* add timer descriptor to epoll. */
 	struct epoll_event ev;
 	ev.events = EPOLLIN | EPOLLERR;
-	ev.data.ptr = &pool->timerfd;
-	epoll_ctl(pool->epfd, EPOLL_CTL_ADD, pool->timerfd, &ev);
+	ev.data.ptr = &timerfd;
+	epoll_ctl(epfd, EPOLL_CTL_ADD, timerfd, &ev);
 
-	update_timeout(pool);
+	timer_queue_init(cp);
+	update_timeout(cp);
 
-	pool->events = malloc(sizeof(struct epoll_event) * INITIAL_NEVENT);
-	if (pool->events == NULL)
-		goto events_failed;
-
-	pool->nevents = INITIAL_NEVENT;
-
-	pool->cs = malloc(sizeof(struct connection) * max);
-	if (pool->cs == NULL)
-		goto conn_failed;
-
-	buf = n_skbuf_new(max * 2);
-	if (buf == NULL)
-		goto buf_failed;
-
-	pool->max = max;
-
+	/* connection && skbuf */
 	i = max;
 	next = NULL;
-
 	do
 	{
 		i--;
 
 		/* double link */
-		pool->cs[i].next = next;
-		pool->cs[i].prev = NULL;
+		cp->cs[i].next = next;
+		cp->cs[i].prev = NULL;
 		if (next != NULL)
-			next->prev = &pool->cs[i];
+			next->prev = &cp->cs[i];
 
-		pool->cs[i].fd = -1;
-		pool->cs[i].recv_buf = &buf[i * 2];
-		pool->cs[i].send_buf = &buf[i * 2 + 1];
+		cp->cs[i].fd = -1;
+		cp->cs[i].recv_buf = &bufs[i * 2];
+		cp->cs[i].send_buf = &bufs[i * 2 + 1];
 
 		/* next */
-		next = &pool->cs[i];
+		next = &cp->cs[i];
 
 	} while (i);
 
-	pool->free_conns = next;
-	pool->n_free_conns = max;
-	pool->conns = NULL;
-	pool->n_conns = 0;
+	cp->free_conns = next;
+	cp->n_free_conns = max;
+	cp->conns = NULL;
+	cp->n_conns = 0;
 
-	return pool;
+	return cp;
 
-buf_failed:
-	free(pool->cs);
-conn_failed:
-	free(pool->events);
-events_failed:
-	timer_queue_destroy(pool);
-timer_queue_failed:
-	free(pool);
-pool_failed:
-	close(timerfd);
-timerfd_failed:
-	close(epfd);
 failed:
+	if (epfd >= 0)
+		close(epfd);
+	if (ees)
+		free(ees);
+	if (timerfd >= 0)
+		close(timerfd);
+	if (h)
+		free(h);
+	if (cp)
+		free(cp);
+	if (cs)
+		free(cs);
+	if (bufs)
+		free(bufs);
 	return NULL;
 }
 
@@ -474,7 +488,7 @@ struct listening *create_listening(struct connection_pool *cp, void* sockaddr, s
 	memset(l, 0, sizeof(struct listening));
 
 
-	l->data = NULL;
+	l->next = NULL;
 	l->fd = -1;
 
 	sa = malloc(sizeof(socklen));
@@ -493,7 +507,7 @@ struct listening *create_listening(struct connection_pool *cp, void* sockaddr, s
 	l->conn = NULL;
 
 	/* add to pool->ls */
-	l->data = cp->ls;
+	l->next = cp->ls;
 	cp->ls = l;
 
 	return l;
@@ -578,7 +592,7 @@ int open_listening_sockets(struct connection_pool *cp)
 			return -1;
 		}
 next:
-		l = l->data;
+		l = l->next;
 	}
 
 	return 0;
@@ -603,7 +617,7 @@ void close_listening_sockets(struct connection_pool *cp)
 		close(l->fd);
 
 		/* next */
-		l = l->data;
+		l = l->next;
 	}
 }
 
@@ -619,7 +633,7 @@ struct connecting *create_connecting(struct connection_pool *cp, void* sockaddr,
 	
 	memset(ci, 0, sizeof(struct connecting));
 
-	ci->data = NULL;
+	ci->next = NULL;
 
 	sa = malloc(sizeof(socklen));
 	if (sa == NULL)
@@ -637,7 +651,7 @@ struct connecting *create_connecting(struct connection_pool *cp, void* sockaddr,
 	ci->conn = NULL;
 
 	/* add to pool->cis */
-	ci->data = cp->cis;
+	ci->next = cp->cis;
 	cp->cis = ci;
 
 	return ci;
@@ -714,4 +728,9 @@ void connecting_peer(struct connection_pool* cp, struct connecting *ci)
 		return;
 
 	} while (0);
+}
+
+int send_msg(struct connection_pool *cp, struct connection *c, char* msg, size_t sz)
+{
+	return 0;
 }

@@ -80,6 +80,24 @@ static struct skbuf_chain *skbuf_chain_insert_new(struct skbuf *buf, size_t datl
 	return chain;
 }
 
+void skbuf_init(struct skbuf *buf)
+{
+	buf->first = NULL;
+	buf->last = NULL;
+	buf->last_with_datap = &buf->first;
+	buf->ref_count = 1;
+}
+
+void skbuf_destroy(struct skbuf *buf)
+{
+	struct skbuf_chain *chain, *next;
+	for (chain = buf->first; chain != NULL; chain = next)
+	{
+		next = chain->next;
+		free(chain);
+	}
+}
+
 struct skbuf *skbuf_new()
 {
 	struct skbuf *buffer;

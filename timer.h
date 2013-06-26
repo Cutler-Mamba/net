@@ -23,7 +23,13 @@ struct timer_node
 	timer_expire_handler handler;
 };
 
-int timer_queue_init(struct connection_pool *cp);
+struct heap
+{
+	struct timer_node **p;
+	size_t n, a;
+};
+
+void timer_queue_init(struct connection_pool *cp);
 void timer_queue_destroy(struct connection_pool *cp);
 int add_timer(struct connection_pool *cp, time_t timeout, timer_expire_handler handler, void* data);
 long wait_duration_usec(struct connection_pool *cp, long max_duration);
